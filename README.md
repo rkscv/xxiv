@@ -1,5 +1,22 @@
 A 24 puzzle solver that lists all solutions without duplication.
 
+## Usage
+
+```
+$ xxiv --target=24
+Enter some integers separated by spaces:
+>> 1 2 3 4
+4×(3+1+2)=24
+1×2×3×4=24
+2÷1×3×4=24
+(1+3)×(2+4)=24
+[4 solutions]
+
+>> 1 5 5 5
+5×(5-1÷5)=24
+[1 solution]
+```
+
 ## Algorithm
 
 Represent expressions as binary trees. Find all solutions using depth-first search.
