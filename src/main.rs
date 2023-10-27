@@ -1,15 +1,12 @@
-#![feature(iterator_try_collect)]
-#![feature(test)]
-
-extern crate test;
 use clap::Parser;
-use rustyline::{error::ReadlineError, DefaultEditor, Result};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Display,
     ops::{Add, Div, Mul, Sub},
     rc::Rc,
 };
+
+type Integer = i32;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum Priority {
@@ -18,15 +15,15 @@ enum Priority {
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
-struct Exprs {
+struct Term {
     priority: Priority,
-    value: BTreeMap<Expr, usize>,
+    exprs: BTreeMap<Expr, usize>,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
 enum Atom {
-    Int(isize),
-    Exprs(Rc<Exprs>),
+    Integer(Integer),
+    Term(Rc<Term>),
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -35,9 +32,9 @@ struct Expr {
     atom: Atom,
 }
 
-impl From<Exprs> for Atom {
-    fn from(value: Exprs) -> Self {
-        Self::Exprs(value.into())
+impl From<Term> for Atom {
+    fn from(value: Term) -> Self {
+        Self::Term(value.into())
     }
 }
 
@@ -57,20 +54,20 @@ impl Expr {
     }
 }
 
-impl Exprs {
+impl Term {
     fn new(priority: Priority) -> Self {
         Self {
             priority,
-            value: BTreeMap::new(),
+            exprs: BTreeMap::new(),
         }
     }
 
     fn insert(mut self, expr: Expr) -> Self {
         match expr.atom {
-            Atom::Exprs(exprs) if exprs.priority == self.priority => {
-                for (key, value) in &exprs.value {
+            Atom::Term(term) if term.priority == self.priority => {
+                for (key, value) in &term.exprs {
                     *self
-                        .value
+                        .exprs
                         .entry(Expr {
                             symmetrical: key.symmetrical == expr.symmetrical,
                             atom: key.atom.clone(),
@@ -78,7 +75,7 @@ impl Exprs {
                         .or_default() += value;
                 }
             }
-            _ => *self.value.entry(expr).or_default() += 1,
+            _ => *self.exprs.entry(expr).or_default() += 1,
         }
         self
     }
@@ -88,7 +85,7 @@ impl Add for Atom {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        Exprs::new(Priority::Low)
+        Term::new(Priority::Low)
             .insert(Expr::sym(self))
             .insert(Expr::sym(rhs))
             .into()
@@ -99,7 +96,7 @@ impl Sub for Atom {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        Exprs::new(Priority::Low)
+        Term::new(Priority::Low)
             .insert(Expr::sym(self))
             .insert(Expr::asy(rhs))
             .into()
@@ -110,7 +107,7 @@ impl Mul for Atom {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        Exprs::new(Priority::High)
+        Term::new(Priority::High)
             .insert(Expr::sym(self))
             .insert(Expr::sym(rhs))
             .into()
@@ -121,7 +118,7 @@ impl Div for Atom {
     type Output = Self;
 
     fn div(self, rhs: Self) -> Self::Output {
-        Exprs::new(Priority::High)
+        Term::new(Priority::High)
             .insert(Expr::sym(self))
             .insert(Expr::asy(rhs))
             .into()
@@ -207,10 +204,10 @@ impl<'a> Display for Node<'a> {
     }
 }
 
-fn solve(exprs: Vec<&Node>, target: isize, ids: &mut BTreeSet<Atom>) {
+fn solve(exprs: Vec<&Node>, target: Integer, ids: &mut BTreeSet<Atom>) {
     if exprs.len() == 1 {
         let expr = exprs[0];
-        if (expr.value - target as f64).abs() < f64::EPSILON && ids.insert(expr.id.clone()) {
+        if (expr.value - f64::from(target)).abs() < f64::EPSILON && ids.insert(expr.id.clone()) {
             println!("{expr}={target}");
         }
         return;
@@ -236,12 +233,12 @@ fn solve(exprs: Vec<&Node>, target: isize, ids: &mut BTreeSet<Atom>) {
                 {
                     continue;
                 }
-                let mut exprs: Vec<_> = exprs
+                let mut exprs = exprs
                     .iter()
                     .enumerate()
                     .filter(|&(k, _)| k != i && k != j)
                     .map(|(_, &expr)| expr)
-                    .collect();
+                    .collect::<Vec<_>>();
                 let new = Node {
                     value: match op {
                         Op::Add => lhs.value + rhs.value,
@@ -267,74 +264,26 @@ fn solve(exprs: Vec<&Node>, target: isize, ids: &mut BTreeSet<Atom>) {
 #[derive(Parser)]
 struct Args {
     #[arg(short, long, default_value_t = 24)]
-    target: isize,
+    target: Integer,
+    integers: Vec<Integer>,
 }
 
-fn main() -> Result<()> {
+fn main() {
     let args = Args::parse();
-    let mut rl = DefaultEditor::new()?;
+    let exprs = args
+        .integers
+        .iter()
+        .map(|&n| Node {
+            value: f64::from(n),
+            id: Atom::Integer(n),
+            child: None,
+        })
+        .collect::<Vec<_>>();
     let mut ids = BTreeSet::new();
-    println!("Enter some integers separated by spaces:");
-    loop {
-        match rl.readline(">> ") {
-            Ok(line) => {
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-                rl.add_history_entry(line)?;
-                match line
-                    .split_whitespace()
-                    .map(|s| s.parse())
-                    .try_collect::<Vec<_>>()
-                {
-                    Ok(ns) => {
-                        let exprs = ns
-                            .iter()
-                            .map(|&n| Node {
-                                value: n as f64,
-                                id: Atom::Int(n),
-                                child: None,
-                            })
-                            .collect::<Vec<_>>();
-                        ids.clear();
-                        solve(exprs.iter().collect(), args.target, &mut ids);
-                        println!(
-                            "[{} solution{}]",
-                            ids.len(),
-                            if ids.len() > 1 { "s" } else { "" }
-                        )
-                    }
-                    Err(error) => println!("error: {error}"),
-                }
-                println!();
-            }
-            Err(ReadlineError::Interrupted | ReadlineError::Eof) => break,
-            Err(error) => Err(error)?,
-        }
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{solve, Atom, Node};
-    use std::collections::BTreeSet;
-    use test::Bencher;
-
-    #[bench]
-    fn bench(b: &mut Bencher) {
-        let exprs = [1isize, 2, 3, 4]
-            .into_iter()
-            .map(|n| Node {
-                value: n as f64,
-                id: Atom::Int(n),
-                child: None,
-            })
-            .collect::<Vec<_>>();
-        b.iter(|| {
-            let mut ids = BTreeSet::new();
-            solve(exprs.iter().collect(), 24, &mut ids);
-        });
-    }
+    solve(exprs.iter().collect(), args.target, &mut ids);
+    println!(
+        "[{} solution{}]",
+        ids.len(),
+        if ids.len() > 1 { "s" } else { "" }
+    );
 }
