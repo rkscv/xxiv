@@ -3,6 +3,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Display,
     ops::{Add, Div, Mul, Sub},
+    ptr,
     rc::Rc,
 };
 
@@ -235,9 +236,8 @@ fn solve(exprs: Vec<&Node>, target: Integer, ids: &mut BTreeSet<Atom>) {
                 }
                 let mut exprs = exprs
                     .iter()
-                    .enumerate()
-                    .filter(|&(k, _)| k != i && k != j)
-                    .map(|(_, &expr)| expr)
+                    .filter(|&&expr| !ptr::eq(expr, lhs) && !ptr::eq(expr, rhs))
+                    .copied()
                     .collect::<Vec<_>>();
                 let new = Node {
                     value: match op {
